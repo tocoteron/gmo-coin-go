@@ -3,7 +3,8 @@ package margin
 import (
 	"net/http"
 
-	"github.com/tocoteron/gmo-coin-go/api/v1/http/common"
+	"github.com/tocoteron/gmo-coin-go/api/v1/http/endpoint"
+	"github.com/tocoteron/gmo-coin-go/api/v1/http/endpoint/common"
 )
 
 type Margin struct {
@@ -20,7 +21,4 @@ type MarginData struct {
 	ProfitLoss       string `json:"profitLoss"`
 }
 
-const (
-	Method = http.MethodGet
-	Path   = "/v1/account/margin"
-)
+var Endpoint = endpoint.NewEndpoint[any, any, Margin](http.MethodGet, "/v1/account/margin")

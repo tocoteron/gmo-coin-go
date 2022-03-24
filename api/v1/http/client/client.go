@@ -16,8 +16,9 @@ import (
 
 	"github.com/google/go-querystring/query"
 	"github.com/tocoteron/gmo-coin-go/api/v1/auth"
-	"github.com/tocoteron/gmo-coin-go/api/v1/http/private/account/margin"
-	"github.com/tocoteron/gmo-coin-go/api/v1/http/public/status"
+	"github.com/tocoteron/gmo-coin-go/api/v1/http/endpoint"
+	"github.com/tocoteron/gmo-coin-go/api/v1/http/endpoint/private/account/margin"
+	"github.com/tocoteron/gmo-coin-go/api/v1/http/endpoint/public/status"
 )
 
 const (
@@ -38,32 +39,32 @@ func NewClient(opts *ClientOpts) *Client {
 	return &Client{Host: API_HOST, HTTPClient: &http.Client{}, AuthConfig: opts.AuthConfig}
 }
 
-func (c *Client) requestPublic(method, path string, params, body, v interface{}) (*http.Response, error) {
+func requestPublic[P, B, E any](c *Client, e endpoint.Endpoint[P, B, E], p *P, b *B) (*E, *http.Response, error) {
 	// Create request
-	req, err := c.createReq(method, "/public"+path, params, body)
+	req, err := createReq(c, e.Method, "/public"+e.Path, p, b)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Send request
-	resp, err := c.sendReq(req, v)
+	entity, resp, err := sendReq[E](c, req)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	return resp, nil
+	return entity, resp, nil
 }
 
-func (c *Client) requestPrivate(method, path string, params, body, v interface{}) (*http.Response, error) {
+func requestPrivate[P, B, E any](c *Client, e endpoint.Endpoint[P, B, E], p *P, b *B) (*E, *http.Response, error) {
 	// Check auth config
 	if c.AuthConfig == nil {
-		return nil, errors.New("failed to request because auth config is required for private API")
+		return nil, nil, errors.New("failed to request because auth config is required for private API")
 	}
 
 	// Create request
-	req, err := c.createReq(method, "/private"+path, params, body)
+	req, err := createReq(c, e.Method, "/private"+e.Path, p, b)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Sign request
@@ -73,27 +74,27 @@ func (c *Client) requestPrivate(method, path string, params, body, v interface{}
 		if req.Body != nil {
 			reqBody, err = io.ReadAll(req.Body)
 			if err != nil {
-				return nil, fmt.Errorf("failed to read request body: %w", err)
+				return nil, nil, fmt.Errorf("failed to read request body: %w", err)
 			}
 		}
 
 		// Sign
-		err = c.sign(req, method, path, reqBody)
+		err = c.sign(req, e.Method, e.Path, reqBody)
 		if err != nil {
-			return nil, fmt.Errorf("failed to sign http request: %w", err)
+			return nil, nil, fmt.Errorf("failed to sign http request: %w", err)
 		}
 	}
 
 	// Send request
-	resp, err := c.sendReq(req, v)
+	entity, resp, err := sendReq[E](c, req)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	return resp, nil
+	return entity, resp, nil
 }
 
-func (c *Client) createReq(method, path string, params, body interface{}) (*http.Request, error) {
+func createReq[P, B any](c *Client, method, path string, params *P, body *B) (*http.Request, error) {
 	// Build endpoint
 	endpoint, err := url.Parse(c.Host + path)
 	if err != nil {
@@ -131,27 +132,28 @@ func (c *Client) createReq(method, path string, params, body interface{}) (*http
 	return req, nil
 }
 
-func (c *Client) sendReq(req *http.Request, v interface{}) (*http.Response, error) {
+func sendReq[E any](c *Client, req *http.Request) (*E, *http.Response, error) {
 	// Request
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
-		return resp, fmt.Errorf("failed to request to %s: %w", req.URL.String(), err)
+		return nil, resp, fmt.Errorf("failed to request to %s: %w", req.URL.String(), err)
 	}
 	defer resp.Body.Close()
 
 	// Read response body
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return resp, fmt.Errorf("failed to read body of http response: %w", err)
+		return nil, resp, fmt.Errorf("failed to read body of http response: %w", err)
 	}
 
 	// Unmarshal response body to data structure
-	err = json.Unmarshal(respBody, v)
+	var entity E
+	err = json.Unmarshal(respBody, &entity)
 	if err != nil {
-		return resp, fmt.Errorf("failed to unmarshal body of http reponse: %w", err)
+		return nil, resp, fmt.Errorf("failed to unmarshal body of http reponse: %w", err)
 	}
 
-	return resp, nil
+	return &entity, resp, nil
 }
 
 func (c *Client) sign(req *http.Request, method, path string, body []byte) error {
@@ -177,25 +179,19 @@ func (c *Client) sign(req *http.Request, method, path string, body []byte) error
 // Public API
 
 func (c *Client) Status() (*status.Status, *http.Response, error) {
-	resp := &status.Status{}
-
-	httpResp, err := c.requestPublic(status.Method, status.Path, nil, nil, resp)
+	entity, httpResp, err := requestPublic(c, *status.Endpoint, nil, nil)
 	if err != nil {
-		return nil, httpResp, err
+		return nil, httpResp, fmt.Errorf("failed to call status API: %w", err)
 	}
-
-	return resp, httpResp, nil
+	return entity, httpResp, nil
 }
 
 // Private API
 
 func (c *Client) Margin() (*margin.Margin, *http.Response, error) {
-	resp := &margin.Margin{}
-
-	httpResp, err := c.requestPrivate(margin.Method, margin.Path, nil, nil, resp)
+	entity, httpResp, err := requestPrivate(c, *margin.Endpoint, nil, nil)
 	if err != nil {
-		return nil, httpResp, err
+		return nil, httpResp, fmt.Errorf("failed to call margin API: %w", err)
 	}
-
-	return resp, httpResp, nil
+	return entity, httpResp, nil
 }
